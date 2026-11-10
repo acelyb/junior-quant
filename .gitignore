@@ -1,0 +1,51 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ===== 环境与密钥 =====
+.env
+*.token
+TUSHARE_TOKEN*
+
+# ===== 量化数据缓存（大体积，不入库；clone 后重新拉取） =====
+# 忽略目录内全部内容，但用各目录下的 .gitkeep 保留骨架结构
+data/cache/*
+data/cache_long/*
+data/cache_cgo/*
+data/cache_etf/*
+data/cache_min/*
+data/cache_consensus/*
+# P1-4 数据快照代际（硬链接整树，动辄数万文件）
+data/snapshots/
+fundflow_offline/data_fundflow/*
+!**/.gitkeep
+
+# ===== 运行产物（日志/图表/状态，不入库） =====
+reports/*
+*.log
+*.png
+!**/.gitkeep
+
+# ===== 第三方研报 PDF（体积大，不入库）=====
+# 要点笔记 .md 里记录了来源 URL，可随时重新下载；需要永久归档时用 git add -f 显式加入
+docs/futures/refs/*.pdf
+
+# ===== 系统 =====
+.DS_Store
+*.swp
+
+# ===== 本地工具配置（Claude Code 等，含个人权限设置）=====
+.claude/
+
+# ===== 运行时生成的子进程脚本模板（由 ab_alpha_synth / diag_roll_window 写入）=====
+# 内容含执行机绝对路径，每次运行重写，不入库
+.*_sub.py
+
+# ===== ML 持久化模型 artifact（训练产物，不入库；训练器可随时重建）=====
+models/
+
+# ===== 旧键缓存目录（迁移遗留，不入库）=====
+data/cache_trash_oldkey/

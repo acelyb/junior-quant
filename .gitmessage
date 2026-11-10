@@ -1,0 +1,22 @@
+# 公开仓库 commit message 模板
+#
+# 规则：只描述"改了什么"，不写"结果如何"。
+# 研究结论（否决/采纳/夏普/ΔIR/胜率）属于私有库，不要出现在这里。
+#
+# 格式：
+#   <type>(<scope>): <做了什么>
+#
+#   <可选正文：为什么这么改>
+#
+# type: feat | fix | docs | refactor | test | chore
+# scope: 可选，模块名
+#
+# 反例（会被 commit-msg hook 拒绝）：
+#   feat: 季节性因子 drop
+#   feat: 集成不优，采纳单点 250
+#   fix: 修正夏普计算
+#
+# 正例：
+#   feat(backtest): 新增 DirectionPolicy 接口
+#   fix(walk_forward): 修复段首状态未重置
+#   docs: 重写 README

@@ -1,0 +1,132 @@
+# ============================================================
+# jq_framework 示例配置（公开仓库）
+#
+# 这份配置只用 jq_framework 自带的示例因子/策略，保证 clone 下来
+# 不做任何修改就能跑通。要接自己的实现，复制一份改 module 路径即可。
+#
+# 用法：
+#   cp configs/example.yaml configs/local.yaml
+#   然后改 configs/local.yaml（它优先于本文件被加载）
+# ============================================================
+
+# ===== 数据源 =====
+data:
+  cache_dir: data/cache          # 相对仓库根
+  max_cache_days: 1              # 缓存有效期（天）
+  full_refresh_days: 30          # 超过此天数强制全量重拉
+  fetch_workers: 8               # 并发拉取线程数（勿过大，防限流）
+  fin_cache_days: 7              # 基本面缓存有效期（财务报表非日更）
+
+# ===== A 股标的池（示例）=====
+stock:
+  symbols:
+    - "000001"
+    - "600519"
+  period: "daily"
+  adjust: "qfq"
+
+# ===== 期货标的池（示例）=====
+futures:
+  symbols:
+    - "RB0"
+    - "CU0"
+    - "AU0"
+  period: "daily"
+  contract: "X0"                 # X0=新浪主导连续 / built=自建换月复权
+  start: "2018-01-01"
+  margin: 0.1
+  nav: 1000000                   # 示例值，接实盘前请改成自己的账户净值
+  cost:
+    commission: 0.0001
+    slippage: 0.0002
+  # 因子治理卡（scripts/futures_factor_health.py）的因子池。
+  # 留空则跳过该工具；填入你自己的因子名与载体策略名。
+  factor_health:
+    factors: []                    # 如 ["momentum", "value"]
+    extra_carriers: []             # 如 ["my_strategy_cta"]
+  risk:
+    max_leverage: 1.5
+    max_single_margin: 0.30
+    capital_utilization: 0.9
+    vol_target:
+      enabled: true
+      sigma_target: 0.12
+      window: 60
+      w_max: 1.0
+      w_min: 0.20
+
+# ===== 策略 =====
+# module 指向 jq_framework 自带的示例实现。
+# 换成自己的策略：把 module 改为你的包路径（需先 pip install）。
+strategies:
+  dual_ma_example:
+    type: "cta"
+    module: "jq_framework.strategies.examples.demo_strategies"
+    class: "DualMaExample"
+    params:
+      fast: 5
+      slow: 20
+
+  donchian_example:
+    type: "cta"
+    module: "jq_framework.strategies.examples.demo_strategies"
+    class: "DonchianExample"
+    params:
+      entry_n: 20
+      exit_n: 10
+
+# ===== 回测 =====
+backtest:
+  start: "2020-01-01"
+  end: "2025-12-31"
+  commission: 0.0001
+  futures_margin: 0.1
+
+# ===== 每日信号 =====
+daily_signal:
+  futures_strategies: ["dual_ma_example"]
+  stock_strategies: []
+  output: "reports/daily_signal.csv"
+
+# ===== 多因子（A 股）=====
+multifactor:
+  universe: "csi300"             # 成分股池
+  industry_neutral: false        # 行业中性化（需要行业数据）
+
+  # 因子清单：module 指向示例因子。换成自己的因子同理。
+  factors:
+    momentum20:
+      module: "jq_framework.factors.examples.demo_factors"
+      class: "Momentum20"
+      family: "trend"
+      weight: 1.0
+      params:
+        window: 20
+
+    reversal20:
+      module: "jq_framework.factors.examples.demo_factors"
+      class: "Reversal20"
+      family: "reversal"
+      weight: 0.5
+      params:
+        window: 20
+
+  combine: "twolevel"            # twolevel=两层正交合成 / flat=线性加权
+  families:
+    trend:
+      budget_cap: 0.6
+    reversal:
+      budget_cap: 0.4
+
+  select:
+    top_n: 50
+    rebalance_days: 1
+    turnover_buffer: 0.2
+
+  walk_forward:
+    weighting: "static"          # static=配置权重 / ic=ICIR 幅度加权
+    ic_freq: 5
+    min_ic_abs: 0.01
+    ml:
+      n_estimators: 100
+      learning_rate: 0.05

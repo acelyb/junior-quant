@@ -1,0 +1,5 @@
+# ML 合成分支依赖（weighting: "ml" 时需要）。
+# 与 requirements.txt 隔离：保持线性流程安装足迹不变，ML 为 opt-in。
+# 安装：pip install -r requirements-ml.txt（或 conda install -c conda-forge lightgbm scikit-learn）
+lightgbm>=4.0.0
+scikit-learn>=1.3.0
