@@ -32,8 +32,10 @@ def _mc(sym_values: dict[str, list[float]]) -> dict[str, pd.DataFrame]:
 
 
 def _cfg(**kw) -> dict:
+    # 全部门槛参数必须显式给出——框架侧不设默认值（阈值属于策略参数）。
     base = {"enabled": True, "top_n": 2, "min_amount": 0.0,
-            "min_listed_days": 0, "amt_window": 5, "min_market_cap": None}
+            "min_listed_days": 0, "amt_window": 5, "min_market_cap": None,
+            "max_stale_days": 15}
     base.update(kw)
     return base
 
@@ -114,12 +116,21 @@ def main() -> int:
         f"同市值应按 symbol 升序取 A,B（实际 {sel6(DATES[100], set(mc6))}）"
     print("  [6] 同市值并列的确定性排序 OK")
 
-    # ---- 7. 关闭 / 非法配置不生效 ----
-    for bad in ({"enabled": False}, {"enabled": True, "top_n": 0}, {}, None):
+    # ---- 7. 关闭不生效；启用但缺参数必须报错 ----
+    for bad in ({"enabled": False}, {}, None):
         assert parse_pool_cfg(bad) is None, f"{bad} 应解析为 None"
         s = build_pool_selector(mc, px, bad)
         assert s(DATES[100], set(mc)) is None, f"{bad} 构造的选择器应恒返回 None"
-    print("  [7] 关闭/非法配置零生效 OK")
+    # 启用但缺参数 / top_n 非正 → 必须抛错，而不是静默用内置默认值
+    for bad in ({"enabled": True, "top_n": 0},
+                {"enabled": True},
+                {"enabled": True, "top_n": 2, "min_amount": 0.0}):
+        try:
+            parse_pool_cfg(bad)
+            raise AssertionError(f"{bad} 应抛 ValueError（缺参数或非法 top_n），实际未抛")
+        except ValueError:
+            pass
+    print("  [7] 关闭零生效 + 缺参数必须报错 OK")
 
     # ---- 8. 最小市值门槛 ----
     sel8 = build_pool_selector(mc, px, _cfg(top_n=5, min_market_cap=60.0))

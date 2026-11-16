@@ -134,18 +134,33 @@ def build_pool_selector(market_caps: dict[str, pd.DataFrame],
     return _select
 
 
+# 门槛参数的键名。**本模块不提供任何默认值**——具体取多少属于策略参数，由调用方
+# （通常是私有配置）显式提供。框架只定义"这些门槛是什么意思"，不定义"应该设成多少"。
+_REQUIRED_KEYS = ("top_n", "min_amount", "min_listed_days", "amt_window", "max_stale_days")
+
+
 def parse_pool_cfg(cfg: dict | None) -> dict | None:
-    """解析并校验池配置；关闭/非法返回 None（调用方按现行路径处理，零改动）。"""
+    """解析并校验池配置；关闭返回 None（调用方按现行路径处理）。
+
+    启用时必须提供全部门槛参数，缺任何一个都抛 ValueError——**不静默使用内置默认值**。
+    理由同 universe_expansion：这些阈值直接决定训练池成分，属于策略决策而非框架细节，
+    若给默认值，框架就会暗中替使用者做一个有实质影响且出处不可追溯的选择。
+    """
     if not cfg or not cfg.get("enabled"):
         return None
-    top_n = int(cfg.get("top_n", 0) or 0)
+    missing = [k for k in _REQUIRED_KEYS if cfg.get(k) is None]
+    if missing:
+        raise ValueError(
+            f"ml_dynamic_pool 已启用但缺少必填参数 {missing}。"
+            f"这些阈值属于策略参数，须在配置中显式提供（本框架不设默认值）。")
+    top_n = int(cfg["top_n"])
     if top_n <= 0:
-        return None
+        raise ValueError(f"ml_dynamic_pool.top_n 须为正整数，实际 {top_n}")
     return {
         "top_n": top_n,
-        "min_amount": float(cfg.get("min_amount", 3e7)),
-        "min_listed_days": int(cfg.get("min_listed_days", 120)),
+        "min_amount": float(cfg["min_amount"]),
+        "min_listed_days": int(cfg["min_listed_days"]),
         "min_market_cap": cfg.get("min_market_cap"),
-        "amt_window": int(cfg.get("amt_window", 20)),
-        "max_stale_days": int(cfg.get("max_stale_days", 15)),
+        "amt_window": int(cfg["amt_window"]),
+        "max_stale_days": int(cfg["max_stale_days"]),
     }

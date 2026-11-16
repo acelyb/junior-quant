@@ -27,19 +27,34 @@ import numpy as np
 import pandas as pd
 
 
+# 门槛参数的键名。**本模块不提供任何默认值**——具体取多少属于策略参数，由调用方
+# （通常是私有配置）显式提供。框架只定义"这些门槛是什么意思"，不定义"应该设成多少"。
+_REQUIRED_KEYS = ("top_n", "min_amount", "min_listed_days", "amt_window", "max_stale_days")
+
+
 def parse_expansion_cfg(cfg: dict | None) -> dict | None:
-    """解析扩充池配置；关闭/非法返回 None（调用方走现行路径，零改动）。"""
+    """解析扩充池配置；关闭返回 None（调用方走现行路径）。
+
+    启用时必须提供全部门槛参数，缺任何一个都抛 ValueError——**不静默使用内置默认值**。
+    理由：这些阈值直接决定可投资域的成分，属于策略决策而非框架细节。若给默认值，
+    框架就会暗中替使用者做一个有实质影响的选择，且该选择的出处不可追溯。
+    """
     if not cfg or not cfg.get("enabled"):
         return None
-    top_n = int(cfg.get("top_n", 0) or 0)
+    missing = [k for k in _REQUIRED_KEYS if cfg.get(k) is None]
+    if missing:
+        raise ValueError(
+            f"universe_expansion 已启用但缺少必填参数 {missing}。"
+            f"这些阈值属于策略参数，须在配置中显式提供（本框架不设默认值）。")
+    top_n = int(cfg["top_n"])
     if top_n <= 0:
-        return None
+        raise ValueError(f"universe_expansion.top_n 须为正整数，实际 {top_n}")
     return {
         "top_n": top_n,
-        "min_amount": float(cfg.get("min_amount", 3e7)),
-        "min_listed_days": int(cfg.get("min_listed_days", 120)),
-        "amt_window": int(cfg.get("amt_window", 20)),
-        "max_stale_days": int(cfg.get("max_stale_days", 15)),
+        "min_amount": float(cfg["min_amount"]),
+        "min_listed_days": int(cfg["min_listed_days"]),
+        "amt_window": int(cfg["amt_window"]),
+        "max_stale_days": int(cfg["max_stale_days"]),
     }
 
 
@@ -195,17 +210,31 @@ def build_universe_panel(market_caps: dict[str, pd.DataFrame],
 
 def panel_to_returns(universe_panel: dict[pd.Timestamp, set[str]],
                      price_dfs: dict[str, pd.DataFrame],
-                     start) -> pd.Series:
+                     start, lag: int = 1) -> pd.Series:
     """把逐日 U(t) 转成等权基准日收益序列（成员逐日变化）。
 
     与 fetcher.get_index_daily 同口径（等权、截面均值收益），区别只在**成员按日变化**：
     后者接受静态符号表，本函数每天用当日 U(t) 的成员算截面均值。
 
-    注意：不得用"全部历史出现过的 U 成员的并集"——那会让早期基准混入后期才入池的标的，
-    等价于给基准注入它本不该有的成分。
+    **lag 必须 >= 1，默认 1。这是正确性问题，不是可调参数。**
+    U(t) 由 t 日收盘价算出的市值决定。若用 U(t) 去赚 t 日收益，等于"先知道今天谁跌得
+    最惨、再买它"——t 日收益在选池时已经发生完毕。实测（2026-11-04，U(500) 面板，
+    2018-01~2026-09）：滞后 0 日累计 −22.75%、滞后 1 日 +140.92%，偏差 163pp，且方向
+    系统性地压低基准（市值越小的池里，当日下跌者越容易被换进来）。同期 csi1000 等权为
+    +162.27%，可作合理性参照。
+
+    引擎侧选股无此问题：walk_forward 的 port_ret 在选股之前计算，新持仓从次日起才计入
+    收益。基准必须与之一致，故用 t−1 日的池子赚 t 日收益。
+
+    另注意：不得用"全部历史出现过的 U 成员的并集"——那会让早期基准混入后期才入池的
+    标的，等价于给基准注入它本不该有的成分。
     """
     if not universe_panel:
         return pd.Series(dtype=float)
+    if lag < 1:
+        raise ValueError(
+            f"lag={lag} 会引入前视偏差：U(t) 由 t 日收盘市值决定，不能用于赚取 t 日收益。"
+            f"正确取值为 1（用 t−1 日的池子赚 t 日收益），与 walk_forward 的调仓口径一致。")
     # 预计算每只股票的日收益（pct_change 只用前一日，无未来）
     rets: dict[str, pd.Series] = {}
     for sym, df in price_dfs.items():
@@ -215,12 +244,18 @@ def panel_to_returns(universe_panel: dict[pd.Timestamp, set[str]],
         rets[sym] = s.pct_change()
     if not rets:
         return pd.Series(dtype=float)
-    ret_df = pd.DataFrame(rets)
+    ret_df = pd.DataFrame(rets).sort_index()
 
+    # 按日期排序后按位取"滞后 lag 个交易日"的池子（不是日历日：交易日间有周末/长假）
+    panel_dates = sorted(universe_panel)
     rows = []
-    for ts, syms in universe_panel.items():
+    for i, ts in enumerate(panel_dates):
+        j = i - lag
+        if j < 0:
+            continue          # 前 lag 天没有可用的历史池子，起点预热不计收益
         if ts not in ret_df.index:
             continue
+        syms = universe_panel[panel_dates[j]]
         have = [s for s in syms if s in ret_df.columns]
         if not have:
             rows.append((ts, 0.0))
