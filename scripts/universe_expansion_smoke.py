@@ -23,8 +23,9 @@ sys.path.insert(0, str(ROOT))
 import numpy as np
 import pandas as pd
 
-from jq_framework.factors.universe_expansion import (build_universe_panel, panel_to_returns,
-                                        parse_expansion_cfg)
+from jq_framework.factors.universe_expansion import (build_universe_panel,
+                                                     panel_to_returns,
+                                                     parse_expansion_cfg)
 
 DATES = pd.bdate_range("2018-01-02", periods=300)
 START = DATES[0]
@@ -54,6 +55,7 @@ def _px(syms, n=300, close=10.0, volume=5e6, start_idx=0,
 
 
 def _cfg(**kw) -> dict:
+    # 全部门槛参数必须显式给出——框架侧不设默认值（阈值属于策略参数）。
     base = {"enabled": True, "top_n": 2, "min_amount": 0.0,
             "min_listed_days": 0, "amt_window": 5, "max_stale_days": 15}
     base.update(kw)
@@ -141,11 +143,20 @@ def main() -> int:
     print("  [7] 基准逐日换成员（等权用当日成员）OK")
 
     # ---- 8. 关闭/非法配置 ----
-    for bad in ({"enabled": False}, {"enabled": True, "top_n": 0}, {}, None):
+    for bad in ({"enabled": False}, {}, None):
         assert parse_expansion_cfg(bad) is None, f"{bad} 应解析为 None"
         assert build_universe_panel(mc, px, members, DATES, bad) == {}, \
             f"{bad} 应返回空池"
-    print("  [8] 关闭/非法配置零生效 OK")
+    # 启用但缺参数 / top_n 非正 → 必须抛错，而不是静默用内置默认值
+    for bad in ({"enabled": True, "top_n": 0},
+                {"enabled": True},
+                {"enabled": True, "top_n": 2, "min_amount": 0.0}):
+        try:
+            parse_expansion_cfg(bad)
+            raise AssertionError(f"{bad} 应抛 ValueError（缺参数或非法 top_n），实际未抛")
+        except ValueError:
+            pass
+    print("  [8] 关闭零生效 + 缺参数必须报错 OK")
 
     # ---- 9. 停牌中的成分股不得被剔除（U ⊇ csi1000 的硬保证）----
     # M1 是成分股，但在 DATES[200] 当天停牌（日线里没有这一天）。基线判据是
@@ -167,6 +178,34 @@ def main() -> int:
     assert "N1" in U9[DATES[200]], \
         f"当日可交易的非成员应入池（实际 {U9[DATES[200]]}）"
     print("  [9] 停牌成员不被剔除（U ⊇ csi1000）OK")
+
+    # ---- 10. 基准不得用当日池赚当日收益（前视偏差）----
+    # 构造：A 每日 +1%，B 每日 -1%。池子在第 100 天从 {A} 换成 {B}。
+    # 若实现正确（用 t-1 日池子赚 t 日收益）：第 100 天仍赚 A 的 +1%，第 101 天才赚 B 的 -1%。
+    # 若实现在第 100 天就用新池，会凭空吃到 B 当天的 -1%，基准被系统性压低。
+    ca = [10.0] * 300
+    cb = [10.0] * 300
+    for i in range(1, 300):
+        ca[i] = ca[i - 1] * 1.01
+        cb[i] = cb[i - 1] * 0.99
+    px10 = {"A": pd.DataFrame({"date": DATES, "close": ca, "volume": 5e6}),
+            "B": pd.DataFrame({"date": DATES, "close": cb, "volume": 5e6})}
+    panel10 = {DATES[i]: ({"A"} if i < 100 else {"B"}) for i in range(300)}
+    r10 = panel_to_returns(panel10, px10, START)
+    # 返回序列跳过了前 lag 天（起点预热），故 rows[k] 对应 DATES[k+lag]。
+    # 换池发生在 DATES[100]：该日必须仍用 DATES[99] 的池子（{A}，+1%），
+    # 次日才用 {B}（-1%）。rows[99] ↔ DATES[100]，rows[100] ↔ DATES[101]。
+    assert abs(r10.iloc[99] - 0.01) < 1e-9, \
+        f"换池当日应仍用旧池（+1%），实际 {r10.iloc[99]}——用新池=前视偏差"
+    assert abs(r10.iloc[100] + 0.01) < 1e-9, \
+        f"换池次日应用新池（-1%），实际 {r10.iloc[100]}"
+    # lag=0 必须显式拒绝，而不是静默给出有偏结果
+    try:
+        panel_to_returns(panel10, px10, START, lag=0)
+        raise AssertionError("lag=0 应抛 ValueError（前视偏差），实际未抛")
+    except ValueError as e:
+        assert "前视" in str(e), f"异常信息应说明前视偏差，实际 {e}"
+    print("  [10] 基准用滞后池、拒绝 lag=0 OK")
 
     print("\n== 扩充可投资域冒烟 全部通过 ==")
     return 0
